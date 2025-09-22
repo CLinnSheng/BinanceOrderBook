@@ -1,0 +1,22 @@
+build/
+cmake-build-debug/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+.cache/
+_deps/
+
+# Executables and libraries
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.json
+
+# Object files
+*.o
+*.objin/
