@@ -1,4 +1,6 @@
 #include "WebSocket.h"
+#include "OrderBook.h"
+#include "OrderBookManager.h"
 #include <iostream>
 #include <json/json.h>
 #include <websocketpp/client.hpp>
@@ -27,8 +29,8 @@ typedef websocketpp::lib::shared_ptr<websocketpp::lib::asio::ssl::context> conte
 //     ws_client.set_tls_init_handler([this](websocketpp::connection_hdl hdl) { return this->on_tls_init(hdl); });
 // }
 
-WebSocket::WebSocket(AveragePrice &avgPrice, const std::string &tradingSymbol)
-    : running(false), avgPrice(avgPrice), symbol(tradingSymbol)
+WebSocket::WebSocket(AveragePrice &avgPrice, OrderBookManager &orderBookManager, const std::string &tradingSymbol)
+    : running(false), avgPrice(avgPrice), orderBookManager(orderBookManager), symbol(tradingSymbol)
 {
     ws_client.set_access_channels(websocketpp::log::alevel::all);
     ws_client.clear_access_channels(websocketpp::log::alevel::frame_payload);
@@ -55,41 +57,77 @@ WebSocket::WebSocket(AveragePrice &avgPrice, const std::string &tradingSymbol)
 
 void WebSocket::on_message(client::message_ptr msg)
 {
-    //std::cout << "Received: " << msg->get_payload() << std::endl;
+    // Check if shutdown was requested
+    if (!g_running.load()) {
+        // Don't call stop() from within the callback to avoid deadlock
+        // Just return and let the main thread handle shutdown
+        return;
+    }
+
+    std::string payload = msg->get_payload();
+    // Debugging disabled for UI display:
+    // std::cout << "Received: " << payload.substr(0, 200) << "..." << std::endl;
+
     try
     {
         Json::Value root;
         Json::Reader reader;
 
-        if (reader.parse(msg->get_payload(), root))
+        if (reader.parse(payload, root))
         {
-            if (root.isMember("w"))
-            { // "c" is the close price in ticker stream
-                double price = std::stod(root["w"].asString());
-                avgPrice.updatePrice(price);
+            // Check if this is a stream message
+            if (root.isMember("stream") && root.isMember("data"))
+            {
+                std::string stream = root["stream"].asString();
+                Json::Value data = root["data"];
+
+                // Debug: print stream names (disabled)
+                // static int msgCount = 0;
+                // if (++msgCount % 10 == 0) { // Print every 10th message to avoid spam
+                //     std::cerr << "Stream: " << stream << std::endl;
+                // }
+
+                // Handle bookTicker stream (contains best bid "b" and best ask "a")
+                if (stream.find("@bookTicker") != std::string::npos && data.isMember("b") && data.isMember("a"))
+                {
+                    double bestBid = std::stod(data["b"].asString());
+                    double bestAsk = std::stod(data["a"].asString());
+                    double midPrice = (bestBid + bestAsk) / 2.0;
+                    avgPrice.updatePrice(midPrice);
+                }
+                // Handle depth stream
+                else if (stream.find("@depth") != std::string::npos)
+                {
+                    orderBookManager.processDepthUpdate(payload);
+                }
+            }
+            // Fallback for direct bookTicker stream (old format)
+            else if (root.isMember("b") && root.isMember("a"))
+            {
+                double bestBid = std::stod(root["b"].asString());
+                double bestAsk = std::stod(root["a"].asString());
+                double midPrice = (bestBid + bestAsk) / 2.0;
+                avgPrice.updatePrice(midPrice);
             }
         }
     }
     catch (const std::exception &e)
     {
-        std::cout << "Error parsing message: " << e.what() << std::endl;
+        // Silently handle errors to avoid UI glitching
     }
 }
 
 void WebSocket::on_open(websocketpp::connection_hdl hdl)
 {
-    std::cout << "Connection opened" << std::endl;
     this->hdl = hdl;
 }
 
 void WebSocket::on_close()
 {
-    std::cout << "Connection closed" << std::endl;
 }
 
 void WebSocket::on_fail()
 {
-    std::cout << "WebSocket connection failed" << std::endl;
 }
 context_ptr WebSocket::on_tls_init(websocketpp::connection_hdl hdl)
 {
@@ -104,7 +142,7 @@ context_ptr WebSocket::on_tls_init(websocketpp::connection_hdl hdl)
     }
     catch (std::exception &e)
     {
-        std::cout << "TLS init error: " << e.what() << std::endl;
+        // Silently handle TLS errors to avoid UI glitching
     }
 
     return ctx;
@@ -143,12 +181,14 @@ void WebSocket::stop()
     websocketpp::lib::error_code ec;
     ws_client.close(hdl, websocketpp::close::status::going_away, "", ec);
 
+    // Stop the client to exit the event loop
+    ws_client.stop();
+
     if (ws_thread.joinable())
     {
-        ws_thread.join();
+        // Use detach instead of join to avoid potential deadlock
+        ws_thread.detach();
     }
-
-    ws_client.stop();
 }
 
 void WebSocket::start()
@@ -158,14 +198,16 @@ void WebSocket::start()
 
     running.store(true);
 
-    std::string uri = "wss://stream.binance.com:9443/ws/" + symbol + "@avgPrice";
+    // Subscribe to both bookTicker and depth streams using the combined stream
+    // Use @depth for full incremental updates and @bookTicker for best bid/ask
+    std::string combined_uri = uri + symbol + "@bookTicker/" + symbol + "@depth";
+    // std::cerr << "Connecting to: " << combined_uri << std::endl;
 
     websocketpp::lib::error_code ec;
-    client::connection_ptr con = ws_client.get_connection(uri, ec);
+    client::connection_ptr con = ws_client.get_connection(combined_uri, ec);
 
     if (ec)
     {
-        //std::cout << "Connection error: " << ec.message() << std::endl;
         return;
     }
 

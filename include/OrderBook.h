@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AveragePrice.h"
+#include "OrderBookManager.h"
 #include "OrderBookUI.h"
 #include "WebSocket.h"
 
@@ -10,6 +11,7 @@ class OrderBook
 {
   private:
     AveragePrice avgPrice;
+    OrderBookManager orderBookManager;
     WebSocket ws;
     std::string symbol;
     OrderBookUI ui;

@@ -3,17 +3,19 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <string>
 
-class PriceTracker;
+// Forward declaration
+class OrderBookManager;
 
 class OrderBookUI
 {
   private:
     AveragePrice &avgPrice;
+    OrderBookManager &orderBookManager;
     std::string symbol;
     ftxui::ScreenInteractive screen;
 
   public:
-    OrderBookUI(AveragePrice &avgPrice, const std::string &ticker);
+    OrderBookUI(AveragePrice &avgPrice, OrderBookManager &orderBookManager, const std::string &ticker);
     ~OrderBookUI() = default;
 
     void start();

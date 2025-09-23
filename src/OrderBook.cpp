@@ -12,14 +12,13 @@ void signalHandler(int signal)
 std::atomic<bool> g_running(true);
 
 OrderBook::OrderBook(const std::string &tradingSymbol)
-    : symbol(tradingSymbol), ws(avgPrice, tradingSymbol), ui(avgPrice, tradingSymbol)
+    : symbol(tradingSymbol), ws(avgPrice, orderBookManager, tradingSymbol), ui(avgPrice, orderBookManager, tradingSymbol)
 {
 }
 
 void OrderBook::run()
 {
-    std::cout << "Starting Binance OrderBook for " << symbol << std::endl;
-    std::cout << "Press Ctrl+C to stop..." << std::endl;
+    // Status messages disabled to prevent FTXUI interference
 
     ws.start();
 
@@ -28,5 +27,6 @@ void OrderBook::run()
 
     ui.start();
 
+    // Immediately stop WebSocket when UI exits
     ws.stop();
 }
