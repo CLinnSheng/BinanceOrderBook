@@ -1,7 +1,7 @@
-#include "WebSocket.h"
 #include "OrderBook.h"
-#include "OrderBookManager.h"
-#include <iostream>
+#include "WebSocket.h"
+#include <algorithm>
+#include <cctype>
 #include <json/json.h>
 #include <websocketpp/client.hpp>
 #include <websocketpp/close.hpp>
@@ -11,26 +11,10 @@
 typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
 typedef websocketpp::lib::shared_ptr<websocketpp::lib::asio::ssl::context> context_ptr;
 
-// WebSocket::WebSocket()
-// {
-//     ws_client.init_asio();
-//
-//     // Set message handler
-//     ws_client.set_message_handler(
-//         [this](websocketpp::connection_hdl hdl, client::message_ptr msg) { this->on_message(hdl, msg); });
-//
-//     // Set open handler
-//     ws_client.set_open_handler([this](websocketpp::connection_hdl hdl) { this->on_open(hdl); });
-//
-//     // Set close handler
-//     ws_client.set_close_handler([this](websocketpp::connection_hdl hdl) { this->on_close(hdl); });
-//
-//     // Set TLS init handler
-//     ws_client.set_tls_init_handler([this](websocketpp::connection_hdl hdl) { return this->on_tls_init(hdl); });
-// }
-
-WebSocket::WebSocket(AveragePrice &avgPrice, OrderBookManager &orderBookManager, const std::string &tradingSymbol)
-    : running(false), avgPrice(avgPrice), orderBookManager(orderBookManager), symbol(tradingSymbol)
+WebSocket::WebSocket(AveragePrice &avgPrice, OrderBookManager &orderBookManager, OrderBookSynchronizer &synchronizer,
+                     const std::string &tradingSymbol)
+    : running(false), avgPrice(avgPrice), orderBookManager(orderBookManager), synchronizer(synchronizer),
+      symbol(tradingSymbol)
 {
     ws_client.set_access_channels(websocketpp::log::alevel::all);
     ws_client.clear_access_channels(websocketpp::log::alevel::frame_payload);
@@ -50,23 +34,17 @@ WebSocket::WebSocket(AveragePrice &avgPrice, OrderBookManager &orderBookManager,
     ws_client.set_fail_handler([this](websocketpp::connection_hdl) { on_fail(); });
 }
 
-// void WebSocket::on_message(websocketpp::connection_hdl hdl, client::message_ptr)
-// {
-//     std::cout << "Received: " << msg->get_payload() << std::endl;
-// }
-
 void WebSocket::on_message(client::message_ptr msg)
 {
     // Check if shutdown was requested
-    if (!g_running.load()) {
+    if (!g_running.load())
+    {
         // Don't call stop() from within the callback to avoid deadlock
         // Just return and let the main thread handle shutdown
         return;
     }
 
     std::string payload = msg->get_payload();
-    // Debugging disabled for UI display:
-    // std::cout << "Received: " << payload.substr(0, 200) << "..." << std::endl;
 
     try
     {
@@ -75,31 +53,24 @@ void WebSocket::on_message(client::message_ptr msg)
 
         if (reader.parse(payload, root))
         {
-            // Check if this is a stream message
+            // Check if this is a stream message (combined streams format)
             if (root.isMember("stream") && root.isMember("data"))
             {
                 std::string stream = root["stream"].asString();
-                Json::Value data = root["data"];
 
-                // Debug: print stream names (disabled)
-                // static int msgCount = 0;
-                // if (++msgCount % 10 == 0) { // Print every 10th message to avoid spam
-                //     std::cerr << "Stream: " << stream << std::endl;
-                // }
-
-                // Handle bookTicker stream (contains best bid "b" and best ask "a")
-                if (stream.find("@bookTicker") != std::string::npos && data.isMember("b") && data.isMember("a"))
+                // Handle depth stream only - process through synchronizer
+                if (stream.find("@depth") != std::string::npos)
                 {
-                    double bestBid = std::stod(data["b"].asString());
-                    double bestAsk = std::stod(data["a"].asString());
-                    double midPrice = (bestBid + bestAsk) / 2.0;
-                    avgPrice.updatePrice(midPrice);
+                    synchronizer.processDepthEvent(payload);
+                    updateMidPrice();
                 }
-                // Handle depth stream
-                else if (stream.find("@depth") != std::string::npos)
-                {
-                    orderBookManager.processDepthUpdate(payload);
-                }
+            }
+            // Handle direct depth stream format (single stream)
+            else if (root.isMember("U") && root.isMember("u") && root.isMember("b") && root.isMember("a"))
+            {
+                // This is a direct depth update, not wrapped in stream format
+                synchronizer.processDepthEvent(payload);
+                updateMidPrice();
             }
             // Fallback for direct bookTicker stream (old format)
             else if (root.isMember("b") && root.isMember("a"))
@@ -142,30 +113,10 @@ context_ptr WebSocket::on_tls_init(websocketpp::connection_hdl hdl)
     }
     catch (std::exception &e)
     {
-        // Silently handle TLS errors to avoid UI glitching
     }
 
     return ctx;
 }
-
-// void WebSocket::connect(const std::string &ticker)
-// {
-//     websocketpp::lib::error_code ec;
-//     const std::string url = this->url + ticker;
-//     client::connection_ptr con = ws_client.get_connection(url, ec);
-//
-//     if (ec)
-//     {
-//         std::cout << "Could not create connection: " << ec.message() << std::endl;
-//         return;
-//     }
-//
-//     hdl = con->get_handle();
-//     ws_client.connect(con);
-//
-//     // Start the ASIO io_service run loop in a separate thread
-//     ws_thread = std::thread([this]() { ws_client.run(); });
-// }
 
 WebSocket::~WebSocket()
 {
@@ -191,6 +142,21 @@ void WebSocket::stop()
     }
 }
 
+void WebSocket::updateMidPrice()
+{
+    if (synchronizer.isSynchronized())
+    {
+        auto [bids, asks] = synchronizer.getTopLevels(1);
+        if (!bids.empty() && !asks.empty())
+        {
+            double bestBid = bids[0].getPrice();
+            double bestAsk = asks[0].getPrice();
+            double midPrice = (bestBid + bestAsk) / 2.0;
+            avgPrice.updatePrice(midPrice);
+        }
+    }
+}
+
 void WebSocket::start()
 {
     if (running.load())
@@ -198,13 +164,12 @@ void WebSocket::start()
 
     running.store(true);
 
-    // Subscribe to both bookTicker and depth streams using the combined stream
-    // Use @depth for full incremental updates and @bookTicker for best bid/ask
-    std::string combined_uri = uri + symbol + "@bookTicker/" + symbol + "@depth";
-    // std::cerr << "Connecting to: " << combined_uri << std::endl;
+    std::string lowerSymbol = symbol;
+    std::transform(lowerSymbol.begin(), lowerSymbol.end(), lowerSymbol.begin(), ::tolower);
+    std::string depth_uri = baseUri + lowerSymbol + "@depth";
 
     websocketpp::lib::error_code ec;
-    client::connection_ptr con = ws_client.get_connection(combined_uri, ec);
+    client::connection_ptr con = ws_client.get_connection(depth_uri, ec);
 
     if (ec)
     {

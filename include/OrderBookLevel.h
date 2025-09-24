@@ -2,18 +2,16 @@
 
 class OrderBookLevel
 {
-private:
+  private:
     double price_;
     double quantity_;
 
-public:
+  public:
     OrderBookLevel(double price, double quantity);
 
-    // Getters
     double getPrice() const;
     double getQuantity() const;
 
-    // Setters
     void setPrice(double price);
     void setQuantity(double quantity);
 };

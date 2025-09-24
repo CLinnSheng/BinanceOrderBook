@@ -4,12 +4,12 @@ OrderBookData::OrderBookData() : lastUpdateId_(0)
 {
 }
 
-const BidsMap& OrderBookData::getBids() const
+const BidsMap &OrderBookData::getBids() const
 {
     return bids_;
 }
 
-const AsksMap& OrderBookData::getAsks() const
+const AsksMap &OrderBookData::getAsks() const
 {
     return asks_;
 }
@@ -19,12 +19,12 @@ long long OrderBookData::getLastUpdateId() const
     return lastUpdateId_;
 }
 
-BidsMap& OrderBookData::getBids()
+BidsMap &OrderBookData::getBids()
 {
     return bids_;
 }
 
-AsksMap& OrderBookData::getAsks()
+AsksMap &OrderBookData::getAsks()
 {
     return asks_;
 }

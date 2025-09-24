@@ -1,11 +1,15 @@
+# Build directories
 build/
 cmake-build-debug/
+cmake-build-release/
 
 # CMake artifacts
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
+CPackConfig.cmake
+CPackSourceConfig.cmake
 .cache/
 _deps/
 
@@ -15,8 +19,15 @@ _deps/
 *.so
 *.a
 *.lib
-*.json
+main
+main.exe
+
+# Generated files
+compile_commands.json
 
 # Object files
 *.o
-*.objin/
+*.obj
+
+# Docker
+.dockerignore

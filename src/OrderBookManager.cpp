@@ -1,4 +1,5 @@
 #include "OrderBookManager.h"
+#include "OrderBookSynchronizer.h"
 #include <iostream>
 #include <json/json.h>
 
@@ -6,11 +7,21 @@ OrderBookManager::OrderBookManager() : initialized(false)
 {
 }
 
+void OrderBookManager::setSynchronizer(OrderBookSynchronizer *sync)
+{
+    synchronizer = sync;
+
+    // Connect synchronizer's callback to our callback chain
+    if (synchronizer && updateCallback)
+    {
+        synchronizer->setUpdateCallback(updateCallback);
+    }
+}
+
 void OrderBookManager::updateOrderBook(const BidsMap &bids, const AsksMap &asks, long long updateId)
 {
     std::lock_guard<std::mutex> lock(orderbook_mutex);
 
-    // Update bids
     for (const auto &bid : bids)
     {
         if (bid.second == 0.0)
@@ -25,7 +36,6 @@ void OrderBookManager::updateOrderBook(const BidsMap &bids, const AsksMap &asks,
         }
     }
 
-    // Update asks
     for (const auto &ask : asks)
     {
         if (ask.second == 0.0)
@@ -76,7 +86,7 @@ void OrderBookManager::processDepthUpdate(const std::string &jsonData)
             return;
         }
 
-        // Extract update IDs for proper validation (Binance protocol)
+        // Extract update IDs
         long long firstUpdateId = data.isMember("U") ? data["U"].asInt64() : 0;
         long long finalUpdateId = data["u"].asInt64();
         long long prevUpdateId = data.isMember("pu") ? data["pu"].asInt64() : 0;
@@ -98,7 +108,6 @@ void OrderBookManager::processDepthUpdate(const std::string &jsonData)
             }
         }
 
-        // Process asks (use "a" field for full depth stream)
         AsksMap asks;
         Json::Value asksArray = data["a"];
         for (const auto &ask : asksArray)
@@ -111,26 +120,30 @@ void OrderBookManager::processDepthUpdate(const std::string &jsonData)
             }
         }
 
-        // Debug: Print what we're processing (disabled for clean UI)
-        // std::cerr << "Processing " << bids.size() << " bids, " << asks.size() << " asks (updateId: " << updateId << ")" << std::endl;
-
         // Update the orderbook
         updateOrderBook(bids, asks, updateId);
     }
     catch (const std::exception &e)
     {
-        // Silently handle errors to avoid UI glitching
     }
 }
 
 OrderBookData OrderBookManager::getOrderBookSnapshot() const
 {
+    if (synchronizer)
+    {
+        return synchronizer->getOrderBookSnapshot();
+    }
     std::lock_guard<std::mutex> lock(orderbook_mutex);
     return orderbook;
 }
 
 std::pair<std::vector<OrderBookLevel>, std::vector<OrderBookLevel>> OrderBookManager::getTopLevels(int levels) const
 {
+    if (synchronizer)
+    {
+        return synchronizer->getTopLevels(levels);
+    }
     std::lock_guard<std::mutex> lock(orderbook_mutex);
     return std::make_pair(orderbook.getTopBids(levels), orderbook.getTopAsks(levels));
 }
@@ -138,10 +151,20 @@ std::pair<std::vector<OrderBookLevel>, std::vector<OrderBookLevel>> OrderBookMan
 void OrderBookManager::setUpdateCallback(const std::function<void()> &callback)
 {
     updateCallback = callback;
+
+    // If synchronizer is already set, connect the callback to it
+    if (synchronizer)
+    {
+        synchronizer->setUpdateCallback(updateCallback);
+    }
 }
 
 bool OrderBookManager::isInitialized() const
 {
+    if (synchronizer)
+    {
+        return synchronizer->isSynchronized();
+    }
     return initialized.load();
 }
 

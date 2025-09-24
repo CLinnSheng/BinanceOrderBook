@@ -1,7 +1,6 @@
 #include "OrderBookLevel.h"
 
-OrderBookLevel::OrderBookLevel(double price, double quantity)
-    : price_(price), quantity_(quantity)
+OrderBookLevel::OrderBookLevel(double price, double quantity) : price_(price), quantity_(quantity)
 {
 }
 
