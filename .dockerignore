@@ -1,0 +1,37 @@
+# Build artifacts
+build/
+cmake-build-debug/
+cmake-build-release/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CPackConfig.cmake
+CPackSourceConfig.cmake
+.cache/
+_deps/
+compile_commands.json
+
+# Executables
+main
+main.exe
+
+# Object files
+*.o
+*.obj
+
+# Log files
+*.log
+orderbook.log
+
+# Git
+.git/
+.gitignore
+
+# Documentation (optional - remove if you want docs in container)
+*.md
+
+# Docker files (avoid recursion)
+Dockerfile
+.dockerignore
+docker-compose.yml
