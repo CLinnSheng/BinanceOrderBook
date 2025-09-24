@@ -29,5 +29,5 @@ compile_commands.json
 *.o
 *.obj
 
-# Docker
 .dockerignore
+
